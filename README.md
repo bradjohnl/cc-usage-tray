@@ -4,7 +4,7 @@ A Linux tray icon + dashboard for **Claude Code** users that shows live `/usage`
 
 > **Not affiliated with or endorsed by Anthropic.** This tool reads only data Claude Code already writes to your local disk plus the JSON Anthropic itself feeds to the user-configurable [`statusLine` hook](https://code.claude.com/docs/en/statusline). It does **not** proxy, resell, or otherwise abuse Claude API access.
 
-![tray screenshot placeholder](docs/tray.png)
+![Tray icon: green dot with "31% → 53%" label showing current week % and projected week % at reset](https://raw.githubusercontent.com/bradjohnl/cc-usage-tray/main/docs/tray.png)
 
 ## Why this exists
 
