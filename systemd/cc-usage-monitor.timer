@@ -1,0 +1,11 @@
+[Unit]
+Description=Run cc-usage-monitor every 5 minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude Code usage-monitor tray icon (GTK3 AppIndicator)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Optional ntfy push: uncomment and set both vars (must match the monitor service)
+#Environment=CLAUDE_USAGE_NTFY_URL=https://ntfy.sh
+#Environment=CLAUDE_USAGE_NTFY_TOPIC=replace-with-your-private-topic
+ExecStart=/usr/bin/python3 %h/Projects/cc-usage-tray/tray/usage-monitor-tray.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
