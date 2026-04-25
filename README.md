@@ -88,6 +88,39 @@ Quit tray
 
 **Optional ntfy push notifications** when projection or current % crosses 90%, plus a desktop notification via `notify-send`.
 
+## Compatibility
+
+The tray uses [AyatanaAppIndicator3](https://ayatanaindicators.github.io/), the
+maintained successor to the legacy AppIndicator. Library packaging and tray
+support varies by desktop:
+
+| Desktop | Tray icon shows? |
+|---|---|
+| **KDE Plasma** | ✅ Native (StatusNotifierItem) |
+| **Cinnamon / MATE / Budgie / Xfce / LXQt** | ✅ Native |
+| **Pop!_OS / Ubuntu** (GNOME-based but ship the extension by default) | ✅ |
+| **GNOME (stock, since 3.26 / Sep 2017)** | ⚠️ Requires the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension. Install: `sudo apt install gnome-shell-extension-appindicator` (Debian/Ubuntu) or `sudo dnf install gnome-shell-extension-appindicator` (Fedora), then enable in GNOME Extensions and log out/in |
+| **Wayland sessions** | ✅ Same behavior as X11 (Ayatana uses StatusNotifierItem, not X11-specific code) |
+
+### Library package by distro
+
+The Python `gi` binding for AyatanaAppIndicator3 needs the typelib. Install the
+appropriate package for your distro:
+
+| Distro | Package |
+|---|---|
+| Debian / Ubuntu / Mint / Pop!_OS / Kali | `gir1.2-ayatanaappindicator3-0.1` |
+| Fedora / RHEL / CentOS Stream | `libayatana-appindicator-gtk3` |
+| Arch / Manjaro / EndeavourOS | `libayatana-appindicator` (`extra` repo) |
+| openSUSE | `typelib-1_0-AyatanaAppIndicator3-0_1` |
+| NixOS | `libayatana-appindicator` |
+| Void / Alpine / musl-based | varies; you may need to build from source |
+
+If you're on stock GNOME and don't want to install the extension, the
+`usage_monitor` daemon still produces `~/.claude/usage_status.txt` and the HTML
+dashboard — you just lose the tray icon and would need to glance at the file
+or open the dashboard manually.
+
 ## Requirements
 
 - Linux with systemd `--user` services (tested on Pop!_OS 22.04, GNOME)
