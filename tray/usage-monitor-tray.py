@@ -7,12 +7,24 @@ Requires system Python (not anaconda) for gi typelibs:
 Reads ~/.claude/usage_status.txt every 10s, updates icon + label.
 Right-click menu: Open dashboard, Refresh now, Open status file, Quit.
 """
+import json
 import os
 import re
 import subprocess
 import sys
 from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
+
+# Make the sibling usage_monitor package importable regardless of how the
+# tray is launched (script path, systemd ExecStart, etc.).
+_PKG_PARENT = Path(__file__).resolve().parent.parent
+if str(_PKG_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PKG_PARENT))
+
+from usage_monitor.notify_decision import (  # noqa: E402
+    decide_notification,
+    pcts_from_status,
+)
 
 import cairo
 import gi
@@ -24,6 +36,7 @@ from gi.repository import GLib, Gtk  # noqa: E402
 STATUS_FILE = Path.home() / ".claude" / "usage_status.txt"
 DASHBOARD_FILE = Path.home() / ".claude" / "usage_monitor" / "dashboard.html"
 ICON_DIR = Path.home() / ".claude" / "usage_monitor" / "icons"
+NOTIFY_STATE_FILE = Path.home() / ".claude" / "usage_monitor" / "notify_state.json"
 REFRESH_SECONDS = 10
 SERVICE_NAME = "claude-usage-monitor.service"
 STALE_AFTER_MINUTES = 10  # warn if last fresh scrape older than this
@@ -158,23 +171,61 @@ def _pct_markup(pct, state_hint: str) -> str:
     return f"<span foreground='{c}'><b>{pct}%</b></span>"
 
 
-def send_ntfy(title: str, body: str, priority: str = "default") -> None:
+def send_ntfy(title: str, body: str, priority: str = "default",
+              replace_id: str | None = None) -> str | None:
+    """Publish to ntfy and return the message id from the response.
+
+    If replace_id is given, ntfy >= v2.16 will UPDATE the existing message
+    in clients instead of stacking a new notification (X-Sequence-ID).
+    Returns None when ntfy is disabled (env unset) or on any error.
+    """
     url = os.environ.get("CLAUDE_USAGE_NTFY_URL", "")
     topic = os.environ.get("CLAUDE_USAGE_NTFY_TOPIC", "")
     if not url or not topic:
-        return  # ntfy disabled when either env var unset
-    subprocess.Popen(
-        ["curl", "-s", "--max-time", "5", "-X", "POST",
-         f"{url}/{topic}",
-         "-H", f"Title: {title}",
-         "-H", f"Priority: {priority}",
-         "-d", body],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+        return None  # ntfy disabled when either env var unset
+    cmd = ["curl", "-s", "--max-time", "5", "-X", "POST",
+           f"{url}/{topic}",
+           "-H", f"Title: {title}",
+           "-H", f"Priority: {priority}"]
+    if replace_id:
+        cmd.extend(["-H", f"X-Sequence-ID: {replace_id}"])
+    cmd.extend(["-d", body])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=6)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    try:
+        return json.loads(result.stdout).get("id")
+    except (json.JSONDecodeError, AttributeError):
+        return None
 
 
 def is_escalation(prev: str, curr: str) -> bool:
     return _RANK.get(curr, 0) > _RANK.get(prev, 0)
+
+
+def _load_notify_state() -> tuple[str, dict, str | None]:
+    try:
+        data = json.loads(NOTIFY_STATE_FILE.read_text())
+        state = data.get("state", _STATE_SAFE)
+        pcts = data.get("pcts") or {"proj": None, "week": None, "session": None}
+        ntfy_id = data.get("ntfy_id")
+        return state, pcts, ntfy_id
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return _STATE_SAFE, {"proj": None, "week": None, "session": None}, None
+
+
+def _save_notify_state(state: str, pcts: dict, ntfy_id: str | None) -> None:
+    try:
+        NOTIFY_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        NOTIFY_STATE_FILE.write_text(json.dumps(
+            {"state": state, "pcts": pcts, "ntfy_id": ntfy_id},
+            separators=(",", ":"),
+        ))
+    except OSError:
+        pass
 
 
 class UsageTray:
@@ -189,7 +240,7 @@ class UsageTray:
         self.menu = Gtk.Menu()
         self._build_menu()
         self.indicator.set_menu(self.menu)
-        self._last_state = _STATE_SAFE
+        self._last_state, self._last_pcts, self._last_ntfy_id = _load_notify_state()
         self._update()
         GLib.timeout_add_seconds(REFRESH_SECONDS, self._update)
 
@@ -253,22 +304,35 @@ class UsageTray:
         s = parse_status(raw) if raw else {}
         state = pick_state(s)
 
-        if is_escalation(self._last_state, state):
+        curr_pcts = pcts_from_status(s)
+        notif = decide_notification(
+            self._last_state, state, self._last_pcts, curr_pcts
+        )
+        if notif is not None:
             sess = s.get("session_pct")
             sess_part = f" · sess {sess}%" if isinstance(sess, int) else ""
             body = (
                 f"wk {s.get('week_pct', '?')}% → proj {s.get('proj_pct', '?')}% "
                 f"by {s.get('reset_label', '?')}{sess_part}"
             )
-            if state == _STATE_ALERT:
-                subprocess.Popen(["notify-send", "-u", "critical", "-t", "0",
-                                  "Claude usage ALERT \U0001f6a8", body])
-                send_ntfy("Claude usage ALERT \U0001f6a8", body, "urgent")
-            elif state == _STATE_WARN:
-                subprocess.Popen(["notify-send", "-u", "normal", "-t", "15000",
-                                  "Claude usage warning \u26a0\ufe0f", body])
-                send_ntfy("Claude usage warning \u26a0\ufe0f", body, "default")
-        self._last_state = state
+            urgency_map = {"urgent": "critical", "default": "normal", "low": "low"}
+            timeout_map = {"urgent": "0", "default": "15000", "low": "8000"}
+            subprocess.Popen([
+                "notify-send",
+                "-u", urgency_map.get(notif.severity, "normal"),
+                "-t", timeout_map.get(notif.severity, "15000"),
+                notif.title, body,
+            ])
+            new_id = send_ntfy(
+                notif.title, body, notif.severity,
+                replace_id=self._last_ntfy_id,
+            )
+            if new_id:
+                self._last_ntfy_id = new_id
+        if state != _STATE_UNKNOWN:
+            self._last_state = state
+            self._last_pcts = curr_pcts
+            _save_notify_state(state, curr_pcts, self._last_ntfy_id)
 
         self.indicator.set_icon_full(_icon_path(state), f"Claude usage: {state}")
 
