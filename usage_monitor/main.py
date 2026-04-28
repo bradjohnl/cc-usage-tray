@@ -15,7 +15,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from usage_monitor.ccusage_adapter import fetch_active_block
+from usage_monitor.config import HISTORY_PATH
 from usage_monitor.dashboard import render_dashboard
+from usage_monitor import pause_state
 from usage_monitor.projector import (
     project_final_pct,
     project_session_final_pct,
@@ -123,6 +125,113 @@ def _write_status(projected: float, current: int, reset_at: datetime, alerting: 
     )
 
 
+def record_completed_weeks(readings: list[dict]) -> int:
+    """Append one entry per completed week to weekly_history.jsonl.
+
+    A completed week is identified by a `reset_at` value that no longer
+    appears in the most recent reading (the active week). For each prior
+    `reset_at`, we record the maximum `week_all.pct` ever observed for
+    that reset window. Idempotent: only weeks not already in history get
+    appended.
+
+    Returns the number of new entries written.
+    """
+    if not readings:
+        return 0
+    active_reset = readings[-1]["week_all"].get("reset_at")
+    by_reset: dict[str, int] = {}
+    for r in readings:
+        try:
+            rst = r["week_all"]["reset_at"]
+            pct = int(r["week_all"]["pct"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if rst == active_reset:
+            continue  # current week, not yet completed
+        if pct > by_reset.get(rst, -1):
+            by_reset[rst] = pct
+    if not by_reset:
+        return 0
+    existing: set[str] = set()
+    if HISTORY_PATH.exists():
+        try:
+            for line in HISTORY_PATH.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if "reset_at" in rec:
+                        existing.add(rec["reset_at"])
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            pass
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    new_count = 0
+    with HISTORY_PATH.open("a") as fh:
+        # Sort by reset_at so the file stays time-ordered.
+        for rst in sorted(by_reset):
+            if rst in existing:
+                continue
+            fh.write(json.dumps({"reset_at": rst, "final_pct": by_reset[rst]}) + "\n")
+            new_count += 1
+    return new_count
+
+
+def refresh_outputs(readings: list[dict]) -> None:
+    """Update status_file + dashboard.html from existing readings, in-process.
+
+    Used by the tray's control endpoints to keep the user-facing surfaces in
+    sync with config changes WITHOUT going through systemd or ccusage. Skips
+    ntfy / desktop notifications and any subprocess work.
+    """
+    if not readings:
+        return
+    reading = readings[-1]
+    now = datetime.now()
+    projected = project_final_pct(readings[-24:], now=now)
+    week_alerting = should_alert(projected, reading["week_all"]["pct"], THRESHOLD_PCT)
+    session_pct_now = (
+        reading["session"]["pct"]
+        if isinstance(reading.get("session"), dict)
+        and reading["session"].get("pct") is not None
+        else None
+    )
+    session_alerting = (
+        session_pct_now is not None and session_pct_now >= THRESHOLD_PCT
+    )
+    paused = pause_state.load(now=now)
+    alerting = (week_alerting or session_alerting) and paused is None
+    rb = rate_breakdown(readings[-24:], now=now)
+    rate = (
+        rb["recent_rate_pct_per_h"]
+        if rb["recent_rate_pct_per_h"] is not None
+        else rb["anchored_rate_pct_per_h"]
+    )
+    reset_dt = datetime.fromisoformat(reading["week_all"]["reset_at"])
+    session_proj_pct = project_session_final_pct(reading, now=now)
+    session_ends = (
+        datetime.fromisoformat(reading["session"]["reset_at"])
+        if isinstance(reading.get("session"), dict)
+        and reading["session"].get("reset_at")
+        else None
+    )
+    last_fresh_at = datetime.fromisoformat(reading["captured_at"])
+    _write_status(
+        projected, reading["week_all"]["pct"], reset_dt, alerting,
+        rate_per_h=rate or 0.0, session_pct=session_pct_now,
+        session_tokens=None, session_cost_usd=None,
+        session_ends=session_ends,
+        session_proj_pct=session_proj_pct,
+        last_fresh_at=last_fresh_at,
+    )
+    try:
+        DASHBOARD_FILE.write_text(render_dashboard(readings, now=now))
+    except Exception as e:
+        print(f"[usage_monitor] dashboard render failed: {e}", file=sys.stderr)
+
+
 def _alert_recently_sent(readings: list[dict]) -> bool:
     now = datetime.now()
     cutoff = now - timedelta(hours=ALERT_DEDUP_WINDOW_H)
@@ -206,7 +315,23 @@ def main() -> int:
     )
     alerting = week_alerting or session_alerting
 
-    if alerting and not _alert_recently_sent(readings):
+    # Auto-pause if a hard limit is hit; pause persists until that reset.
+    week_reset_dt = datetime.fromisoformat(reading["week_all"]["reset_at"])
+    session_reset_dt = (
+        datetime.fromisoformat(reading["session"]["reset_at"])
+        if isinstance(reading.get("session"), dict) and reading["session"].get("reset_at")
+        else None
+    )
+    pause_state.auto_pause_for_limit(
+        week_pct=reading["week_all"]["pct"],
+        session_pct=session_pct_now,
+        week_reset_at=week_reset_dt,
+        session_reset_at=session_reset_dt,
+        now=now,
+    )
+    paused = pause_state.load(now=now)
+
+    if alerting and paused is None and not _alert_recently_sent(readings):
         reading["alerted"] = True
         if session_alerting and not week_alerting:
             title = "Claude 5-hour-session limit risk"
@@ -230,6 +355,12 @@ def main() -> int:
 
     if fresh:
         _save_readings(log_path, readings)
+        try:
+            n = record_completed_weeks(readings)
+            if n:
+                print(f"[usage_monitor] recorded {n} completed week(s) to {HISTORY_PATH.name}", file=sys.stderr)
+        except Exception as e:
+            print(f"[usage_monitor] history recording failed: {e}", file=sys.stderr)
 
     reset_dt = datetime.fromisoformat(reading["week_all"]["reset_at"])
     rb = rate_breakdown(readings[-24:], now=now)
