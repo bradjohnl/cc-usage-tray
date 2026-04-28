@@ -23,11 +23,12 @@ from usage_monitor.projector import (
     should_alert,
 )
 from usage_monitor.rate_limits_cache import read_cache as read_rate_limits_cache
+from usage_monitor.thresholds import ALERT_PCT
 
 STATE_DIR = Path.home() / ".claude" / "usage_monitor"
 STATUS_FILE = Path.home() / ".claude" / "usage_status.txt"
 DASHBOARD_FILE = STATE_DIR / "dashboard.html"
-THRESHOLD_PCT = 90.0
+THRESHOLD_PCT = ALERT_PCT
 MAX_READINGS = 672  # 14 days * 48 readings/day @ 30min interval
 ALERT_DEDUP_WINDOW_H = 4  # don't re-alert more often than this
 RATE_LIMITS_CACHE_MAX_AGE_S = 600  # accept rate-limit cache up to 10 min old

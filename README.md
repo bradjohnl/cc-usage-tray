@@ -56,10 +56,12 @@ Three sanctioned data sources, no internal API access:
 ## What you get
 
 **Tray icon** with color-coded disk:
-- 🟢 Safe (< 70% week + < 70% session)
-- 🟡 Approaching (≥ 70%)
-- 🔴 Alert (≥ 90% or projected to exceed)
+- 🟢 Safe (below the warn threshold)
+- 🟡 Approaching (≥ warn threshold, default 70%)
+- 🔴 Alert (≥ alert threshold, default 90%, or projected to exceed)
 - ⚪ Stale (data older than 10 min — your active Claude Code session has been idle)
+
+Both thresholds are configurable — see [Configuration](#configuration).
 
 **Tray label** (next to icon):
 ```
@@ -84,9 +86,9 @@ Open status file
 Quit tray
 ```
 
-**HTML dashboard** (one click from menu): two SVG charts — weekly across the 7-day window, 5-hour block — both with anchored projection, alert thresholds at 90%/100%, "now" marker.
+**HTML dashboard** (one click from menu): two SVG charts — weekly across the 7-day window, 5-hour block — both with anchored projection, warn / alert / 100% threshold lines, and a "now" marker.
 
-**Optional ntfy push notifications** when projection or current % crosses 90%, plus a desktop notification via `notify-send`.
+**Optional ntfy push notifications** when projection or current % crosses the alert threshold, plus a desktop notification via `notify-send`.
 
 ## Compatibility
 
@@ -208,9 +210,34 @@ If both env vars are unset, only local desktop notifications fire.
 
 | Env var | Default | Purpose |
 |---|---|---|
+| `CC_USAGE_WARN_PCT` | `70` | Amber-zone threshold — tray turns yellow at or above |
+| `CC_USAGE_ALERT_PCT` | `90` | Red-zone threshold — tray turns red, ntfy fires at or above |
 | `CLAUDE_USAGE_NTFY_URL` | unset (no push) | ntfy server base URL |
 | `CLAUDE_USAGE_NTFY_TOPIC` | unset (no push) | ntfy topic name |
 | `CCUSAGE_BINARY` | `ccusage` (PATH lookup) | Path to ccusage if not on PATH |
+
+`CC_USAGE_WARN_PCT` must be strictly less than `CC_USAGE_ALERT_PCT`; invalid
+values fall back to the defaults with a warning on stderr.
+
+To override threshold values for the systemd services, drop a unit override:
+
+```bash
+systemctl --user edit cc-usage-monitor.service
+```
+
+```ini
+[Service]
+Environment=CC_USAGE_WARN_PCT=60
+Environment=CC_USAGE_ALERT_PCT=85
+```
+
+Repeat for `cc-usage-tray.service` so the tray and the daemon agree (the
+dashboard reads its thresholds from the daemon process). Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart cc-usage-monitor.service cc-usage-tray.service
+```
 
 The default scrape cadence is 5 minutes; edit `systemd/cc-usage-monitor.timer` `OnUnitActiveSec=` to change.
 

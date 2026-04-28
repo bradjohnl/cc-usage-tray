@@ -25,6 +25,11 @@ from usage_monitor.notify_decision import (  # noqa: E402
     decide_notification,
     pcts_from_status,
 )
+from usage_monitor.thresholds import (  # noqa: E402
+    ALERT_PCT,
+    WARN_PCT,
+    classify,
+)
 
 import cairo
 import gi
@@ -139,9 +144,9 @@ def pick_state(s: dict) -> str:
     pcts = [s["proj_pct"], s["week_pct"]]
     if isinstance(sess, int):
         pcts.append(sess)
-    if s.get("alerting") or max(pcts) >= 90:
+    if s.get("alerting") or max(pcts) >= ALERT_PCT:
         return _STATE_ALERT
-    if max(pcts) >= 70:
+    if max(pcts) >= WARN_PCT:
         return _STATE_WARN
     return _STATE_SAFE
 
@@ -362,10 +367,7 @@ class UsageTray:
             sess_pct = s.get("session_pct")
             if isinstance(sess_pct, int):
                 # Color-code session by its own thresholds
-                sess_state = (
-                    "alert" if sess_pct >= 90 else
-                    ("warn" if sess_pct >= 70 else "safe")
-                )
+                sess_state = classify(sess_pct)
                 proj = s.get("session_proj_pct")
                 ends = s.get("session_ends")
                 proj_part = f"  →  {_pct_markup(proj, sess_state)}" if isinstance(proj, int) else ""

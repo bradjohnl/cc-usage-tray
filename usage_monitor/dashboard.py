@@ -1,9 +1,10 @@
 """Render a self-contained HTML dashboard from readings.jsonl.
 
 Chart design: X-axis spans the full week (reset - 168h → reset). Y-axis fixed
-0-100% (the plan ceiling). Horizontal threshold lines at 90% (alert) and 100%
-(limit). Data points are a growing tail inside the week window. A dashed line
-shows the anchored projection from "now" to the reset.
+0-100% (the plan ceiling). Horizontal threshold lines at the configured warn
+and alert percentages plus a 100% limit line. Data points are a growing tail
+inside the week window. A dashed line shows the anchored projection from
+"now" to the reset.
 """
 from datetime import datetime, timedelta
 from html import escape
@@ -14,8 +15,9 @@ from usage_monitor.projector import (
     project_session_final_pct,
     rate_breakdown,
 )
+from usage_monitor.thresholds import ALERT_PCT, WARN_PCT
 
-THRESHOLD_PCT = 90.0
+THRESHOLD_PCT = ALERT_PCT
 WEEK_HOURS = 168
 CHART_W = 720
 CHART_H = 240
@@ -52,12 +54,16 @@ def _chart_svg(readings: Sequence[dict], now: datetime, projected: float) -> str
                      f'stroke="#262a33" stroke-dasharray="2,3"/>')
         parts.append(f'<text x="{PAD_L-6}" y="{y+4:.1f}" text-anchor="end" font-size="11" fill="#888">{pct}%</text>')
 
-    # Threshold lines: 90% alert, 100% limit
-    y90 = _y_for(90)
+    # Threshold lines: warn, alert, 100% limit
+    y_warn = _y_for(WARN_PCT)
+    y_alert = _y_for(ALERT_PCT)
     y100 = _y_for(100)
-    parts.append(f'<line x1="{PAD_L}" y1="{y90:.1f}" x2="{CHART_W-PAD_R}" y2="{y90:.1f}" '
+    parts.append(f'<line x1="{PAD_L}" y1="{y_warn:.1f}" x2="{CHART_W-PAD_R}" y2="{y_warn:.1f}" '
+                 f'stroke="#f1c40f" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_warn-4:.1f}" text-anchor="end" font-size="10" fill="#f1c40f">warn {WARN_PCT:g}%</text>')
+    parts.append(f'<line x1="{PAD_L}" y1="{y_alert:.1f}" x2="{CHART_W-PAD_R}" y2="{y_alert:.1f}" '
                  f'stroke="#f39c12" stroke-width="1" stroke-dasharray="4,3" opacity="0.7"/>')
-    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y90-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert 90%</text>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_alert-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert {ALERT_PCT:g}%</text>')
     parts.append(f'<line x1="{PAD_L}" y1="{y100:.1f}" x2="{CHART_W-PAD_R}" y2="{y100:.1f}" '
                  f'stroke="#e74c3c" stroke-width="1" opacity="0.8"/>')
     parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y100-4:.1f}" text-anchor="end" font-size="10" fill="#e74c3c">limit 100%</text>')
@@ -131,12 +137,16 @@ def _chart_svg_session(readings: Sequence[dict], now: datetime, projected: float
                      f'stroke="#262a33" stroke-dasharray="2,3"/>')
         parts.append(f'<text x="{PAD_L-6}" y="{y+4:.1f}" text-anchor="end" font-size="11" fill="#888">{pct}%</text>')
 
-    # Threshold lines
-    y90 = _y_for(90)
+    # Threshold lines: warn, alert, 100% limit
+    y_warn = _y_for(WARN_PCT)
+    y_alert = _y_for(ALERT_PCT)
     y100 = _y_for(100)
-    parts.append(f'<line x1="{PAD_L}" y1="{y90:.1f}" x2="{CHART_W-PAD_R}" y2="{y90:.1f}" '
+    parts.append(f'<line x1="{PAD_L}" y1="{y_warn:.1f}" x2="{CHART_W-PAD_R}" y2="{y_warn:.1f}" '
+                 f'stroke="#f1c40f" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_warn-4:.1f}" text-anchor="end" font-size="10" fill="#f1c40f">warn {WARN_PCT:g}%</text>')
+    parts.append(f'<line x1="{PAD_L}" y1="{y_alert:.1f}" x2="{CHART_W-PAD_R}" y2="{y_alert:.1f}" '
                  f'stroke="#f39c12" stroke-width="1" stroke-dasharray="4,3" opacity="0.7"/>')
-    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y90-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert 90%</text>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_alert-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert {ALERT_PCT:g}%</text>')
     parts.append(f'<line x1="{PAD_L}" y1="{y100:.1f}" x2="{CHART_W-PAD_R}" y2="{y100:.1f}" '
                  f'stroke="#e74c3c" stroke-width="1" opacity="0.8"/>')
     parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y100-4:.1f}" text-anchor="end" font-size="10" fill="#e74c3c">limit 100%</text>')
@@ -211,7 +221,7 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
         anchored = rb["anchored_rate_pct_per_h"]
         recent = rb["recent_rate_pct_per_h"]
         alerting = proj >= THRESHOLD_PCT or week_pct >= THRESHOLD_PCT
-        verdict = "⚠ ON TRACK TO HIT LIMIT" if alerting else "✓ safe (under 90%)"
+        verdict = "⚠ ON TRACK TO HIT LIMIT" if alerting else f"✓ safe (under {ALERT_PCT:g}%)"
         verdict_class = "alert" if alerting else "safe"
 
         chart = _chart_svg(readings, now=now, projected=proj)
@@ -257,7 +267,8 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
           <div class="legend">
             <span><i style="background:#4ecdc4"></i>Week %</span>
             <span><i class="dash" style="background:linear-gradient(to right,#4ecdc4 60%,transparent 60%)"></i>Projection to reset</span>
-            <span><i style="background:#f39c12"></i>Alert 90%</span>
+            <span><i style="background:#f1c40f"></i>Warn {WARN_PCT:g}%</span>
+            <span><i style="background:#f39c12"></i>Alert {ALERT_PCT:g}%</span>
             <span><i style="background:#e74c3c"></i>Limit 100%</span>
           </div>
         </div>
@@ -270,7 +281,8 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
           <div class="legend">
             <span><i style="background:#a78bfa"></i>Session %</span>
             <span><i class="dash" style="background:linear-gradient(to right,#a78bfa 60%,transparent 60%)"></i>Projection to reset</span>
-            <span><i style="background:#f39c12"></i>Alert 90%</span>
+            <span><i style="background:#f1c40f"></i>Warn {WARN_PCT:g}%</span>
+            <span><i style="background:#f39c12"></i>Alert {ALERT_PCT:g}%</span>
             <span><i style="background:#e74c3c"></i>Limit 100%</span>
           </div>
         </div>''' if chart_session else ''}
