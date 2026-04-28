@@ -79,6 +79,20 @@ Rate:                     +0.52%/h
 ✓ Safe
 Last fresh data:          17:21 (5m ago)
 ─────────────────────────
+Alert strategy            ▸  ⦿ Anchored
+                             ○ Active hours window
+                             ○ Blend with history
+                             ○ Day-of-week deviation
+Active hours              ▸  Auto: 32 active hours/week
+                             ─────
+                             ⦿ Auto-detect from history
+                             ○ Manual window
+Pause alerts              ▸  Until session reset (5h)
+                             Until weekly reset
+                             For 1 hour
+                             For 4 hours
+Resume alerts                (visible when paused)
+─────────────────────────
 Open dashboard
 Refresh now
 Open status file
@@ -86,7 +100,24 @@ Open status file
 Quit tray
 ```
 
-**HTML dashboard** (one click from menu): two SVG charts — weekly across the 7-day window, 5-hour block — both with anchored projection, warn / alert / 100% threshold lines, and a "now" marker.
+**HTML dashboard** (served live by the tray at `http://127.0.0.1:38734/dashboard`):
+- Per-strategy projection table — all four projections side-by-side, the alerting one highlighted, with one-click "use for alerts" buttons
+- Weekly SVG chart with all four projection lines color-coded; the alerting strategy is bold, the others faded; Y axis auto-scales when projections overshoot 100% so they remain visible above the limit line
+- 5-hour session block chart with the same auto-scaling
+- 7×24 heatmap visualising the active-hours mask (auto-detected or manual)
+- Pause banner shown whenever alerts are silenced; clicking auto / manual on the active-hours card switches modes via the same control endpoint
+
+**Command-line client** `usage-monitor-cli` (installed by `pip install -e .`):
+```
+usage-monitor-cli status              # current usage + pause state
+usage-monitor-cli strategy [list|<name>]
+usage-monitor-cli active-hours [show|auto|manual|set --start H --end H]
+usage-monitor-cli pause [weekly|session|<duration>] [--until ISO]
+usage-monitor-cli resume
+usage-monitor-cli reset-history
+```
+
+**Auto-pause** when the 5-hour session or the 7-day window hits 100% — alerts go quiet until that limit's reset, so you don't get re-pinged every minute when there's nothing to do about it. Manual pause is honoured and never overridden by auto-pause.
 
 **Optional ntfy push notifications** when projection or current % crosses the alert threshold, plus a desktop notification via `notify-send`.
 
@@ -208,6 +239,8 @@ If both env vars are unset, only local desktop notifications fire.
 
 ## Configuration
 
+### Environment variables
+
 | Env var | Default | Purpose |
 |---|---|---|
 | `CC_USAGE_WARN_PCT` | `70` | Amber-zone threshold — tray turns yellow at or above |
@@ -215,6 +248,34 @@ If both env vars are unset, only local desktop notifications fire.
 | `CLAUDE_USAGE_NTFY_URL` | unset (no push) | ntfy server base URL |
 | `CLAUDE_USAGE_NTFY_TOPIC` | unset (no push) | ntfy topic name |
 | `CCUSAGE_BINARY` | `ccusage` (PATH lookup) | Path to ccusage if not on PATH |
+| `USAGE_PROJECTION_STRATEGY` | reads `config.json` | Override the alert strategy for this process |
+| `CC_USAGE_TRAY_CONTROL_PORT` | `38734` | Localhost port for the tray's HTTP control server |
+
+### `~/.claude/usage_monitor/config.json`
+
+Persistent settings. Created on first config change; defaults below apply when absent or when a key is missing:
+
+```jsonc
+{
+  "projection_strategy": "anchored",   // anchored | active_hours | blend | dow_curve
+  "min_elapsed_hours": 0.0,            // suppress projection for the first N hours of a week
+  "active_hours": {
+    "mode": "manual",                   // "manual" or "auto"
+    "start": 8,                         // manual window start hour (0-23)
+    "end": 22,                          // manual window end hour (1-24)
+    "weekdays_only": false,             // manual only: skip Sat/Sun
+    "auto_lookback_days": 28,           // auto only: rolling readings window
+    "auto_min_active_fraction": 0.25    // auto only: bucket active when ≥this fraction of weeks had burn
+  },
+  "blend": {
+    "current_weight": 0.3,
+    "historical_weight": 0.7,
+    "history_window": 4                 // last N completed weeks from weekly_history.jsonl
+  }
+}
+```
+
+Edit this file directly, switch from the tray, or use `usage-monitor-cli`. The tray, dashboard, and daemon all read the same file — a change in one place is visible everywhere within the next refresh tick (10 s tray, instant on dashboard click).
 
 `CC_USAGE_WARN_PCT` must be strictly less than `CC_USAGE_ALERT_PCT`; invalid
 values fall back to the defaults with a warning on stderr.
@@ -241,11 +302,33 @@ systemctl --user restart cc-usage-monitor.service cc-usage-tray.service
 
 The default scrape cadence is 5 minutes; edit `systemd/cc-usage-monitor.timer` `OnUnitActiveSec=` to change.
 
+## Projection strategies
+
+The week-end projection (`→ NN%`) is configurable. Pick whichever matches your usage shape best:
+
+| Strategy | What it does | Best when |
+|---|---|---|
+| `anchored` | `current_pct / hours_elapsed_in_week × hours_remaining + current_pct` | You burn evenly across the whole week (rare). The "linear extrapolate everything" baseline. |
+| `active_hours` | Same formula, but only counts hours inside an active-hours mask (default 08–22 every day, or auto-detected from your history). | You only use Claude during work / waking hours — projection no longer extrapolates an early-week burst through nights and weekends. |
+| `blend` | `0.3 × anchored + 0.7 × trailing 4-week average final pct` (from `weekly_history.jsonl`). | You have a stable weekly average and want a smoothed projection that doesn't panic on a single bursty day. Falls back to `anchored` when there's no history yet. |
+| `dow_curve` | `historical_avg + (current_pct − expected_pct_at_this_active_hour)` — flags only deviation from your usual curve. | You want the alert to fire only when you're meaningfully *ahead* of where you usually are at this point in the week. Falls back to `active_hours` without history. |
+
+**Active-hours auto-detection** (`active_hours.mode = "auto"`, default for new installs): for each consecutive pair of readings within the last 28 days, if `week_all.pct` increased, the `(weekday, hour)` of the second reading is marked as active for that ISO-week. Buckets stay active when ≥25% of observed weeks had positive burn there. The mask is recomputed every projection — readings beyond the lookback window drop out automatically.
+
+**weekly_history.jsonl** (used by `blend` and `dow_curve`) is auto-populated: every scraper run scans `readings.jsonl` for completed weeks (reset_at values not equal to the current week's) and records their max `week_all.pct` as the final pct. Idempotent.
+
+Switch strategy via:
+- Tray menu (`Alert strategy ▸ …`)
+- Dashboard ("use for alerts" button on any row)
+- CLI: `usage-monitor-cli strategy active_hours`
+- Env var: `USAGE_PROJECTION_STRATEGY=active_hours`
+- Config: `~/.claude/usage_monitor/config.json` → `projection_strategy`
+
 ## How accurate is this?
 
 Session % and week % match `/usage` to the percentage point — they're literally the same numbers Claude Code itself displays, captured from the JSON Anthropic feeds to your statusLine hook.
 
-Projection (`→ NN%`) uses an anchored linear rate (current_pct ÷ hours_elapsed_in_window) projected to the reset time. It's pessimistic-stable: it doesn't panic from short bursts (we measured a 38-minute +2% burst projecting to 324% before fixing this), but it does flag sustained high burn early.
+The projection (`→ NN%`) depends on the strategy you pick (see above). The default `anchored` strategy is pessimistic-stable — it doesn't panic from short bursts (we measured a 38-minute +2% burst projecting to 324% before fixing the rate window), but it does flag sustained high burn early. If a flat anchored projection over-fires for your usage pattern, switch to `active_hours` (or `blend` once you have a few weeks of history).
 
 ## Limitations
 
