@@ -65,9 +65,9 @@ Both thresholds are configurable — see [Configuration](#configuration).
 
 **Tray label** (next to icon):
 ```
-30% → 53%
+30% → 53% · 13% → 31%
 ```
-Current week % → projected week % at reset.
+`weekly% → projected weekly%` at reset, then `· session% → projected session%` when a 5h block is active. The session half is hidden when no block is open.
 
 **Click menu**:
 ```
@@ -79,10 +79,12 @@ Rate:                     +0.52%/h
 ✓ Safe
 Last fresh data:          17:21 (5m ago)
 ─────────────────────────
-Alert strategy            ▸  ⦿ Anchored
+Weekly alert strategy     ▸  ⦿ Anchored (rate × remaining)
                              ○ Active hours window
                              ○ Blend with history
                              ○ Day-of-week deviation
+Session alert strategy    ▸  ⦿ Anchored (rate × remaining)
+                             ○ Active hours window
 Active hours              ▸  Auto: 32 active hours/week
                              ─────
                              ⦿ Auto-detect from history
@@ -285,7 +287,8 @@ Persistent settings. Created on first config change; defaults below apply when a
 
 ```jsonc
 {
-  "projection_strategy": "anchored",   // anchored | active_hours | blend | dow_curve
+  "projection_strategy": "anchored",   // weekly: anchored | active_hours | blend | dow_curve
+  "session_projection_strategy": "anchored", // 5h block: anchored | active_hours
   "min_elapsed_hours": 0.0,            // suppress projection for the first N hours of a week
   "active_hours": {
     "mode": "manual",                   // "manual" or "auto"
@@ -345,12 +348,28 @@ The week-end projection (`→ NN%`) is configurable. Pick whichever matches your
 
 **weekly_history.jsonl** (used by `blend` and `dow_curve`) is auto-populated: every scraper run scans `readings.jsonl` for completed weeks (reset_at values not equal to the current week's) and records their max `week_all.pct` as the final pct. Idempotent.
 
-Switch strategy via:
-- Tray menu (`Alert strategy ▸ …`)
-- Dashboard ("use for alerts" button on any row)
+Switch the **weekly** strategy via:
+- Tray menu (`Weekly alert strategy ▸ …`)
+- Dashboard ("use for alerts" button on any row in the *Weekly projection* table)
 - CLI: `usage-monitor-cli strategy active_hours`
 - Env var: `USAGE_PROJECTION_STRATEGY=active_hours`
 - Config: `~/.claude/usage_monitor/config.json` → `projection_strategy`
+
+### Session (5h block) projection strategy
+
+The 5-hour session block has its own independent strategy (`session_projection_strategy` in config, default `anchored`). Only two strategies apply — `blend` and `dow_curve` need historical session baselines that the daemon doesn't keep, so they're not exposed for sessions:
+
+| Strategy | What it does |
+|---|---|
+| `anchored` | `current_pct / hours_elapsed_in_block × hours_remaining + current_pct` — straight rate × remaining. |
+| `active_hours` | Same formula, but only counts hours inside the active-hours mask. Damps off-hour drift inside the block (e.g. starting a session at 21:00 with a 02:00 reset stops projecting through the overnight idle stretch). |
+
+Switch the **session** strategy via:
+- Tray menu (`Session alert strategy ▸ …`)
+- Dashboard ("use for alerts" button on any row in the *Session projection* table)
+- Config: `~/.claude/usage_monitor/config.json` → `session_projection_strategy`
+
+The session strategy choice is independent of the weekly choice — e.g. you can run weekly on `blend` (smoothed by 4-week history) and session on `active_hours` (damped through the overnight portion of the block).
 
 ## How accurate is this?
 
