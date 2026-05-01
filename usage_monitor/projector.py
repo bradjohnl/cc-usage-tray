@@ -323,6 +323,9 @@ def project_final_pct(
 
 
 STRATEGIES = ("anchored", "active_hours", "blend", "dow_curve")
+# Session strategies are a strict subset — blend/dow_curve need historical
+# session baselines the daemon doesn't keep, so they're not exposed.
+SESSION_STRATEGIES = ("anchored", "active_hours")
 
 
 def project_all_strategies(
@@ -356,7 +359,20 @@ def should_alert(projected_pct: float, current_pct: float, threshold: float = 90
     return projected_pct >= threshold or current_pct >= threshold
 
 
-def project_session_final_pct(reading: dict, now: datetime) -> float | None:
+def project_session_final_pct(
+    reading: dict,
+    now: datetime,
+    *,
+    strategy: str | None = None,
+    config: dict | None = None,
+    readings: Sequence[dict] | None = None,
+) -> float | None:
+    """Project session (5h block) final pct using the configured strategy.
+
+    Strategy resolution: explicit arg > config['session_projection_strategy'] >
+    'anchored'. Only `anchored` and `active_hours` are honored; any other
+    value falls back to anchored.
+    """
     sess = reading.get("session")
     if not isinstance(sess, dict):
         return None
@@ -367,11 +383,27 @@ def project_session_final_pct(reading: dict, now: datetime) -> float | None:
     except (TypeError, ValueError):
         return None
     block_start = reset - timedelta(hours=SESSION_HOURS)
+    pct = float(sess["pct"])
+    if reset <= now:
+        return pct
+
+    cfg = config if config is not None else load_config()
+    strat = strategy or cfg.get("session_projection_strategy", "anchored")
+
+    if strat == "active_hours":
+        mask = _resolve_mask(cfg, readings)
+        active_elapsed = _active_hours_between(block_start, now, mask)
+        active_remaining = _active_hours_between(now, reset, mask)
+        if active_elapsed <= 0:
+            return pct
+        rate = pct / active_elapsed
+        return pct + rate * active_remaining
+
     elapsed_h = (now - block_start).total_seconds() / 3600
     if elapsed_h <= 0:
-        return float(sess["pct"])
-    rate = sess["pct"] / elapsed_h
+        return pct
+    rate = pct / elapsed_h
     hours_remaining = (reset - now).total_seconds() / 3600
     if hours_remaining <= 0:
-        return float(sess["pct"])
-    return float(sess["pct"]) + rate * hours_remaining
+        return pct
+    return pct + rate * hours_remaining

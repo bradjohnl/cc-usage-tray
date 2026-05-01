@@ -372,7 +372,10 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
             readings, now=now, projected=proj,
             all_projections=all_projs, active_strategy=active_strategy,
         )
-        sess_proj = project_session_final_pct(last, now=now) if session_block else None
+        sess_proj = (
+            project_session_final_pct(last, now=now, config=cfg, readings=readings)
+            if session_block else None
+        )
         chart_session = _chart_svg_session(readings, now=now, projected=sess_proj)
         recent_str = f"{recent:+.2f}%/h" if recent is not None else "n/a"
 
@@ -399,6 +402,45 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
                 f'</tr>'
             )
         strategy_table = "\n".join(strategy_rows)
+
+        # Session strategy rows — anchored + active_hours only (blend/dow_curve
+        # need session history the daemon doesn't keep).
+        from usage_monitor.projector import SESSION_STRATEGIES
+        active_session_strategy = cfg.get("session_projection_strategy", "anchored")
+        if active_session_strategy not in SESSION_STRATEGIES:
+            active_session_strategy = "anchored"
+        session_strategy_rows = []
+        if session_block:
+            for s in SESSION_STRATEGIES:
+                v = project_session_final_pct(
+                    last, now=now, strategy=s, config=cfg, readings=readings,
+                )
+                if v is None:
+                    continue
+                is_active = s == active_session_strategy
+                badge = (
+                    '<span class="badge active">alerting</span>'
+                    if is_active
+                    else f'<a class="badge cc-control" href="{CONTROL_BASE}/set_session_strategy?name={s}" title="Switch session strategy to {s} (via tray control server)">use for alerts</a>'
+                )
+                from usage_monitor.thresholds import (
+                    SESSION_ALERT_PCT, SESSION_WARN_PCT,
+                )
+                danger = (
+                    "alert" if v >= SESSION_ALERT_PCT
+                    else ("warn" if v >= SESSION_WARN_PCT else "safe")
+                )
+                color_dot = (
+                    f'<span class="color-dot" style="background:{STRATEGY_COLORS.get(s, "#4ecdc4")}"></span>'
+                )
+                session_strategy_rows.append(
+                    f'<tr class="{ "active" if is_active else "" }">'
+                    f'<td class="name">{color_dot}{escape(STRATEGY_LABELS.get(s, s))}</td>'
+                    f'<td class="pct {danger}">{v:.0f}%</td>'
+                    f'<td class="action">{badge}</td>'
+                    f'</tr>'
+                )
+        session_strategy_table = "\n".join(session_strategy_rows)
 
         # Active-hours block: mode + mask + heatmap.
         ah = cfg["active_hours"]
@@ -475,13 +517,24 @@ def render_dashboard(readings: Sequence[dict], now: datetime) -> str:
         </div>
 
         <div class="chart-box strategies">
-          <div class="chart-title">Projection by strategy — alerting strategy is highlighted</div>
+          <div class="chart-title">Weekly projection by strategy — alerting strategy is highlighted</div>
           <table class="strategies-table">
             <thead><tr><th>Strategy</th><th>Projected %</th><th></th></tr></thead>
             <tbody>{strategy_table}</tbody>
           </table>
           <div class="hint">"use for alerts" links require the tray (control server on <code>{CONTROL_BASE}</code>). CLI: <code>usage-monitor-cli strategy &lt;name&gt;</code>.</div>
         </div>
+
+        {f'''
+        <div class="chart-box strategies">
+          <div class="chart-title">Session (5h) projection by strategy — alerting strategy is highlighted</div>
+          <table class="strategies-table">
+            <thead><tr><th>Strategy</th><th>Projected %</th><th></th></tr></thead>
+            <tbody>{session_strategy_table}</tbody>
+          </table>
+          <div class="hint">Only <code>anchored</code> and <code>active_hours</code> apply to the 5h block. Blend/dow_curve need historical session baselines the daemon doesn't keep.</div>
+        </div>
+        ''' if session_strategy_table else ''}
 
         <div class="chart-box">
           <div class="chart-title">Active hours — drives the <code>active_hours</code> and <code>dow_curve</code> strategies</div>

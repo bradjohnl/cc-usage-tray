@@ -13,6 +13,12 @@ READINGS_PATH = Path.home() / ".claude" / "usage_monitor" / "readings.jsonl"
 
 DEFAULTS = {
     "projection_strategy": "anchored",  # anchored | active_hours | blend | dow_curve
+    # Session (5h block) projection strategy. Independent from weekly so the
+    # user can pick e.g. anchored for the long week curve but active_hours for
+    # the 5h block (which damps overnight drift). Only `anchored` and
+    # `active_hours` apply — blend/dow_curve need historical session baselines
+    # the daemon doesn't keep, so they collapse to anchored.
+    "session_projection_strategy": "anchored",  # anchored | active_hours
     "min_elapsed_hours": 0.0,           # below this, no projection (returns current_pct)
     "active_hours": {
         # mode: "manual" uses start/end/weekdays_only.

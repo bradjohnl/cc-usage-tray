@@ -30,7 +30,7 @@ from usage_monitor.notify_decision import (  # noqa: E402
     decide_notification,
     pcts_from_status,
 )
-from usage_monitor.projector import STRATEGIES  # noqa: E402
+from usage_monitor.projector import SESSION_STRATEGIES, STRATEGIES  # noqa: E402
 from usage_monitor.thresholds import (  # noqa: E402
     ALERT_PCT,
     SESSION_ALERT_PCT,
@@ -295,8 +295,8 @@ class UsageTray:
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        # Strategy submenu — switch which projection drives alerts.
-        strategy_item = Gtk.MenuItem(label="Alert strategy")
+        # Weekly strategy submenu — drives the 7-day projection.
+        strategy_item = Gtk.MenuItem(label="Weekly alert strategy")
         strategy_submenu = Gtk.Menu()
         self._strategy_items: dict[str, Gtk.RadioMenuItem] = {}
         group = None
@@ -315,6 +315,27 @@ class UsageTray:
             strategy_submenu.append(radio)
         strategy_item.set_submenu(strategy_submenu)
         self.menu.append(strategy_item)
+
+        # Session strategy submenu — independent strategy for the 5h block.
+        # Only anchored + active_hours apply (blend/dow_curve need history the
+        # daemon doesn't keep for sessions).
+        session_strategy_item = Gtk.MenuItem(label="Session alert strategy")
+        session_strategy_submenu = Gtk.Menu()
+        self._session_strategy_items: dict[str, Gtk.RadioMenuItem] = {}
+        sgroup = None
+        for s in SESSION_STRATEGIES:
+            label = {
+                "anchored": "Anchored (rate × remaining)",
+                "active_hours": "Active hours window",
+            }.get(s, s)
+            radio = Gtk.RadioMenuItem.new_with_label_from_widget(sgroup, label)
+            if sgroup is None:
+                sgroup = radio
+            radio.connect("toggled", self._on_session_strategy_toggled, s)
+            self._session_strategy_items[s] = radio
+            session_strategy_submenu.append(radio)
+        session_strategy_item.set_submenu(session_strategy_submenu)
+        self.menu.append(session_strategy_item)
 
         # Active-hours submenu — auto/manual + current window display.
         active_item = Gtk.MenuItem(label="Active hours")
@@ -468,10 +489,17 @@ class UsageTray:
             # Concise tray label: e.g. "24% → 51%", with ⚠ prefix if stale
             warn_prefix = "\u26a0 " if is_stale else ""
             sess_label = s.get("session_pct")
-            sess_part = f" \u00b7 {sess_label}%s" if isinstance(sess_label, int) else ""
+            sess_proj_label = s.get("session_proj_pct")
+            if isinstance(sess_label, int):
+                if isinstance(sess_proj_label, int):
+                    sess_part = f" \u00b7 {sess_label}% → {sess_proj_label}%"
+                else:
+                    sess_part = f" \u00b7 {sess_label}%"
+            else:
+                sess_part = ""
             self.indicator.set_label(
                 f"{warn_prefix}{s['week_pct']}% → {s['proj_pct']}%{sess_part}",
-                "99% → 99% \u00b7 99%s",
+                "99% → 99% \u00b7 99% → 99%",
             )
             # Override icon to grey "unknown" disk when data is stale
             if is_stale:
@@ -566,6 +594,14 @@ class UsageTray:
             radio.handler_block_by_func(self._on_strategy_toggled)
             radio.set_active(True)
             radio.handler_unblock_by_func(self._on_strategy_toggled)
+        sess_active = cfg.get("session_projection_strategy", "anchored")
+        if sess_active not in SESSION_STRATEGIES:
+            sess_active = "anchored"
+        sess_radio = self._session_strategy_items.get(sess_active)
+        if sess_radio is not None and not sess_radio.get_active():
+            sess_radio.handler_block_by_func(self._on_session_strategy_toggled)
+            sess_radio.set_active(True)
+            sess_radio.handler_unblock_by_func(self._on_session_strategy_toggled)
 
     def _sync_active_hours_summary(self) -> None:
         try:
@@ -645,7 +681,25 @@ class UsageTray:
         subprocess.Popen([
             "notify-send", "-t", "3000",
             "Claude usage monitor",
-            f"Alert strategy → {strategy}. Refreshing…",
+            f"Weekly strategy → {strategy}. Refreshing…",
+        ])
+        subprocess.Popen(["systemctl", "--user", "start", SERVICE_NAME])
+
+    def _on_session_strategy_toggled(self, item: Gtk.RadioMenuItem, strategy: str) -> None:
+        if not item.get_active():
+            return
+        try:
+            cfg = load_config()
+            cfg["session_projection_strategy"] = strategy
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        except Exception as e:
+            subprocess.Popen(["notify-send", "Claude usage monitor", f"Session strategy switch failed: {e}"])
+            return
+        subprocess.Popen([
+            "notify-send", "-t", "3000",
+            "Claude usage monitor",
+            f"Session strategy → {strategy}. Refreshing…",
         ])
         subprocess.Popen(["systemctl", "--user", "start", SERVICE_NAME])
 
@@ -865,7 +919,17 @@ class _ControlHandler(BaseHTTPRequestHandler):
                 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
                 CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
                 _trigger_refresh_blocking()
-                return self._ok(f"Strategy → {name}", return_to)
+                return self._ok(f"Weekly strategy → {name}", return_to)
+            if url.path == "/set_session_strategy":
+                name = (qs.get("name") or [""])[0]
+                if name not in SESSION_STRATEGIES:
+                    return self._bad(f"unknown session strategy {name!r}")
+                cfg = load_config()
+                cfg["session_projection_strategy"] = name
+                CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+                _trigger_refresh_blocking()
+                return self._ok(f"Session strategy → {name}", return_to)
             if url.path == "/set_active_hours_mode":
                 mode = (qs.get("mode") or [""])[0]
                 if mode not in ("auto", "manual"):

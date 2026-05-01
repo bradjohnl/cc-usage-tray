@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-01
+
+### Added
+- **Session projection in tray label.** The tray icon now also shows the
+  projected session % alongside the current value: `24% → 51% · 12% → 28%`
+  (was `24% → 51% · 12%`). The status file already carried this number;
+  the tray was just dropping it.
+- **Independent session projection strategy.** New config field
+  `session_projection_strategy` (default `"anchored"`) selects how the
+  5h block is projected, separately from the weekly strategy. Two
+  strategies apply: `"anchored"` (rate × remaining) and
+  `"active_hours"` (only counts hours within your active-hours mask, so
+  overnight idle stretches don't pull projection up). `blend` and
+  `dow_curve` are weekly-only — no per-session historical baseline
+  exists for them — so they're not exposed for sessions.
+- **Session alert strategy submenu** in the tray, mirroring the existing
+  weekly strategy submenu but with only `anchored` + `active_hours`.
+  Switching takes effect on the next refresh.
+
+### Fixed
+- **ntfy push notifications stopped firing.** The tray and daemon only
+  read the namespaced env vars `CLAUDE_USAGE_NTFY_URL` /
+  `CLAUDE_USAGE_NTFY_TOPIC`. They now also accept the bare names
+  `NTFY_URL` / `NTFY_TOPIC` as a fallback, so users who already export
+  those for other tooling don't need to maintain two copies. Namespaced
+  values still win when both are set.
+
 ## [0.5.0] - 2026-05-01
 
 ### Added

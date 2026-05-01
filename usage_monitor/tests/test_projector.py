@@ -110,6 +110,54 @@ def test_project_session_final_pct_handles_block_end_in_past():
     assert proj == 8.0
 
 
+def test_project_session_final_pct_active_hours_strategy_damps_offhours():
+    """active_hours strategy should not extrapolate the 5h block through
+    inactive (e.g. overnight) hours."""
+    from usage_monitor.projector import project_session_final_pct
+    # Block 22:00 → 03:00 next day. We're at 23:00 (1h elapsed) with 8% used.
+    # Active window: 08-22 every day → block_start..now has ~0 active hours,
+    # remaining 03:00 also outside. Strategy should pin at current pct.
+    reading = {
+        "session": {
+            "pct": 8,
+            "reset_at": "2026-04-26T03:00:00",
+        },
+    }
+    cfg = {
+        "session_projection_strategy": "active_hours",
+        "active_hours": {
+            "mode": "manual",
+            "start": 8,
+            "end": 22,
+            "weekdays_only": False,
+        },
+    }
+    proj = project_session_final_pct(
+        reading,
+        now=datetime(2026, 4, 25, 23, 0),
+        strategy="active_hours",
+        config=cfg,
+    )
+    # No active hours covered → rate undefined → returns current pct.
+    assert proj == 8.0
+
+
+def test_project_session_final_pct_unknown_strategy_falls_back_to_anchored():
+    from usage_monitor.projector import project_session_final_pct
+    reading = {"session": {"pct": 8, "reset_at": "2026-04-25T20:00:00"}}
+    proj = project_session_final_pct(
+        reading,
+        now=datetime(2026, 4, 25, 17, 0),
+        strategy="blend",  # not a session strategy → anchored fallback
+    )
+    assert 19 <= proj <= 21
+
+
+def test_session_strategies_constant_excludes_history_dependent():
+    from usage_monitor.projector import SESSION_STRATEGIES
+    assert SESSION_STRATEGIES == ("anchored", "active_hours")
+
+
 # ---------- strategy: active_hours ----------
 
 def _cfg(strategy, **overrides):

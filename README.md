@@ -207,6 +207,34 @@ If you already have a `statusLine` command configured in `~/.claude/settings.jso
 
 You can keep your existing prompt logic — put it in `~/.claude/statusline-command.sh` and the wrapper will pipe through to it. Or leave that file absent and the wrapper just captures rate_limits silently.
 
+### 3a. (Optional) Show usage + predictions inline in your prompt
+
+Steps 1–3 capture the rate-limit cache; the systemd timer (next step) writes a single-line status to `~/.claude/usage_status.txt` containing weekly %, weekly projection, session %, session projection, and the reset countdown — the same data the tray icon shows.
+
+If your `~/.claude/statusline-command.sh` renders a custom prompt, you can append that line to it. Add this near the bottom of the script, just before its final `echo`:
+
+```bash
+# cc-usage-tray status (weekly% → projected% · session%, projection by reset)
+cc_usage_info=""
+usage_file="$HOME/.claude/usage_status.txt"
+if [ -f "$usage_file" ]; then
+    cc_usage_info="  $(tr -d '\n' < "$usage_file")"
+fi
+
+# Then append ${cc_usage_info} to your existing echo line, e.g.
+echo -e "${user_host} ${dir}${git_info}${token_info}${cc_usage_info}"
+```
+
+Result (Claude Code prompt line):
+
+```
+[user@host] ~/path on main  📊 Claude: week 70% (+0.15%/h) → proj 84% by Tue 15:00 | sess 19% → proj 47% | safe | last 12:31
+```
+
+The projection updates every time the daemon writes a new reading (every ~10 min by default; faster on each `statusLine` event because the wrapper from step 3 re-tees the rate-limit cache and the daemon picks it up on its next tick).
+
+If you don't have a custom `statusline-command.sh`, you can use the snippet above as a standalone status line — set `command` in `settings.json` to a script that just runs the snippet's `echo`.
+
 ### 4. Install systemd units
 
 ```bash
