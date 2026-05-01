@@ -69,7 +69,11 @@ Both thresholds are configurable — see [Configuration](#configuration).
 ```
 `weekly% → projected weekly%` at reset, then `· session% → projected session%` when a 5h block is active. The session half is hidden when no block is open.
 
-**Click menu**:
+**Click menu** (real screenshot — left: tray label `73% → 86% · 53% → 53%`; right: opened menu showing both alert-strategy submenus):
+
+<img src="https://raw.githubusercontent.com/bradjohnl/cc-usage-tray/main/docs/tray-menu.png" alt="Expanded tray menu showing Week / Sonnet / Session / Projected lines, Approaching limit verdict, and Weekly + Session alert strategy submenus" width="280">
+
+For text-only environments, here's the same menu as ASCII:
 ```
 Week (all models):        30%
 Sonnet week:              —
@@ -103,7 +107,11 @@ Quit tray
 ```
 
 **HTML dashboard** (served live by the tray at `http://127.0.0.1:38734/dashboard`):
-- Per-strategy projection table — all four projections side-by-side, the alerting one highlighted, with one-click "use for alerts" buttons
+
+![Dashboard screenshot showing top-line cards (Week 73%, Session 58%, Sonnet, Projected 86% safe), Weekly projection by strategy table with four rows, Session (5h) projection by strategy table with two rows, active-hours auto-detected heatmap, and weekly + session SVG charts](https://raw.githubusercontent.com/bradjohnl/cc-usage-tray/main/docs/dashboard.png)
+
+- Weekly projection table — all four strategies side-by-side, the alerting one highlighted, one-click "use for alerts" buttons
+- Session (5h) projection table — `anchored` + `active_hours` only (the two strategies that apply to the 5h block), same one-click switching
 - Weekly SVG chart with all four projection lines color-coded; the alerting strategy is bold, the others faded; Y axis auto-scales when projections overshoot 100% so they remain visible above the limit line
 - 5-hour session block chart with the same auto-scaling
 - 7×24 heatmap visualising the active-hours mask (auto-detected or manual)
@@ -228,6 +236,8 @@ echo -e "${user_host} ${dir}${git_info}${token_info}${cc_usage_info}"
 ```
 
 Result (Claude Code prompt line):
+
+![Claude Code statusLine showing "Claude: week 73% (+2.50%/h) → proj 86% by Tue 15:00 | sess 53% → proj 53% ends 15:30 | safe | last 15:05"](https://raw.githubusercontent.com/bradjohnl/cc-usage-tray/main/docs/statusline.png)
 
 ```
 [user@host] ~/path on main  📊 Claude: week 70% (+0.15%/h) → proj 84% by Tue 15:00 | sess 19% → proj 47% | safe | last 12:31
