@@ -25,12 +25,13 @@ from usage_monitor.projector import (
     should_alert,
 )
 from usage_monitor.rate_limits_cache import read_cache as read_rate_limits_cache
-from usage_monitor.thresholds import ALERT_PCT
+from usage_monitor.thresholds import ALERT_PCT, SESSION_ALERT_PCT
 
 STATE_DIR = Path.home() / ".claude" / "usage_monitor"
 STATUS_FILE = Path.home() / ".claude" / "usage_status.txt"
 DASHBOARD_FILE = STATE_DIR / "dashboard.html"
 THRESHOLD_PCT = ALERT_PCT
+SESSION_THRESHOLD_PCT = SESSION_ALERT_PCT
 MAX_READINGS = 672  # 14 days * 48 readings/day @ 30min interval
 ALERT_DEDUP_WINDOW_H = 4  # don't re-alert more often than this
 RATE_LIMITS_CACHE_MAX_AGE_S = 600  # accept rate-limit cache up to 10 min old
@@ -199,7 +200,7 @@ def refresh_outputs(readings: list[dict]) -> None:
         else None
     )
     session_alerting = (
-        session_pct_now is not None and session_pct_now >= THRESHOLD_PCT
+        session_pct_now is not None and session_pct_now >= SESSION_THRESHOLD_PCT
     )
     paused = pause_state.load(now=now)
     alerting = (week_alerting or session_alerting) and paused is None
@@ -311,7 +312,7 @@ def main() -> int:
         else None
     )
     session_alerting = (
-        session_pct_now is not None and session_pct_now >= THRESHOLD_PCT
+        session_pct_now is not None and session_pct_now >= SESSION_THRESHOLD_PCT
     )
     alerting = week_alerting or session_alerting
 

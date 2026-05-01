@@ -19,7 +19,7 @@ from usage_monitor.projector import (
     project_session_final_pct,
     rate_breakdown,
 )
-from usage_monitor.thresholds import ALERT_PCT, WARN_PCT
+from usage_monitor.thresholds import ALERT_PCT, SESSION_ALERT_PCT, SESSION_WARN_PCT, WARN_PCT
 
 STRATEGY_LABELS = {
     "anchored": "Anchored (current/elapsed × remaining)",
@@ -228,16 +228,16 @@ def _chart_svg_session(readings: Sequence[dict], now: datetime, projected: float
                      f'stroke="#262a33" stroke-dasharray="2,3"/>')
         parts.append(f'<text x="{PAD_L-6}" y="{y+4:.1f}" text-anchor="end" font-size="11" fill="#888">{pct}%</text>')
 
-    # Threshold lines: warn, alert, 100% limit
-    y_warn = _y_for(WARN_PCT, y_max)
-    y_alert = _y_for(ALERT_PCT, y_max)
+    # Threshold lines: session-specific warn/alert + 100% limit
+    y_warn = _y_for(SESSION_WARN_PCT, y_max)
+    y_alert = _y_for(SESSION_ALERT_PCT, y_max)
     y100 = _y_for(100, y_max)
     parts.append(f'<line x1="{PAD_L}" y1="{y_warn:.1f}" x2="{CHART_W-PAD_R}" y2="{y_warn:.1f}" '
                  f'stroke="#f1c40f" stroke-width="1" stroke-dasharray="4,3" opacity="0.55"/>')
-    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_warn-4:.1f}" text-anchor="end" font-size="10" fill="#f1c40f">warn {WARN_PCT:g}%</text>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_warn-4:.1f}" text-anchor="end" font-size="10" fill="#f1c40f">warn {SESSION_WARN_PCT:g}%</text>')
     parts.append(f'<line x1="{PAD_L}" y1="{y_alert:.1f}" x2="{CHART_W-PAD_R}" y2="{y_alert:.1f}" '
                  f'stroke="#f39c12" stroke-width="1" stroke-dasharray="4,3" opacity="0.7"/>')
-    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_alert-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert {ALERT_PCT:g}%</text>')
+    parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y_alert-4:.1f}" text-anchor="end" font-size="10" fill="#f39c12">alert {SESSION_ALERT_PCT:g}%</text>')
     parts.append(f'<line x1="{PAD_L}" y1="{y100:.1f}" x2="{CHART_W-PAD_R}" y2="{y100:.1f}" '
                  f'stroke="#e74c3c" stroke-width="1" opacity="0.8"/>')
     parts.append(f'<text x="{CHART_W-PAD_R-4}" y="{y100-4:.1f}" text-anchor="end" font-size="10" fill="#e74c3c">limit 100%</text>')

@@ -162,13 +162,14 @@ def _resolve_mask(cfg: dict, readings: Sequence[dict] | None) -> set[tuple[int, 
     mode = cfg["active_hours"].get("mode", "manual")
     if mode != "auto":
         return _manual_mask(cfg)
-    # Try the slice passed in first; fall back to full disk history when the
-    # caller only had the recent tail (callers commonly pass readings[-24:]).
-    auto = auto_active_mask(readings, cfg) if readings else None
-    if auto is None:
-        all_readings = _load_readings_from_disk()
-        if all_readings:
-            auto = auto_active_mask(all_readings, cfg)
+    # Prefer full disk history. Callers commonly pass a 24-reading tail (perf
+    # hint for `_recent_rate`); deriving the mask from that slice yields only
+    # the last day's buckets, which collapses `active_remaining` to ~0 and
+    # pins the projection at current_pct.
+    all_readings = _load_readings_from_disk()
+    auto = auto_active_mask(all_readings, cfg) if all_readings else None
+    if auto is None and readings:
+        auto = auto_active_mask(list(readings), cfg)
     if auto is not None:
         return auto
     return _manual_mask(cfg)

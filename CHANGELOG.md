@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-01
+
 ### Added
+- **Independent 5-hour session thresholds.** New env vars
+  `CC_USAGE_SESSION_WARN_PCT` and `CC_USAGE_SESSION_ALERT_PCT` (defaults
+  inherit weekly: 70 / 90). The 5h block can now alert earlier than the
+  weekly cap without changing weekly thresholds — useful when the 5h
+  burn-rate matters more than the 7-day budget.
+- **Session % in tray label.** The tray icon's text now shows session
+  alongside weekly: `24% → 51% · 12%s`. Hidden when no active session.
+- `usage_monitor.thresholds.classify_session(pct)` — companion to
+  `classify()` that uses the session-specific thresholds.
+- `usage_monitor.thresholds.load_session()` — same env-var contract as
+  `load()`, with weekly defaults as fallback.
+- 13 new tests in `tests/test_thresholds.py` covering session env
+  overrides, partial overrides, fallback behaviour, independence from
+  weekly, classify boundaries, and threshold-driven classification.
+
+### Changed
+- `pick_state()` (tray) now combines weekly and session zones
+  independently — worst zone wins. Previously session was lumped into
+  the weekly thresholds, so you couldn't tune them separately.
+- Session chart in dashboard renders threshold lines using
+  `SESSION_WARN_PCT` / `SESSION_ALERT_PCT` instead of the weekly values.
+- Session-alerting in `main.py` uses `SESSION_ALERT_PCT` (was
+  `THRESHOLD_PCT = ALERT_PCT`).
+
+### Added (active hours, carried from prior unreleased)
 - **Auto-detected active hours.** New `active_hours.mode` field
   (`"manual"` | `"auto"`). In `auto` mode, the projector derives the
   set of `(weekday, hour)` buckets where you actually burn weekly % from

@@ -33,8 +33,11 @@ from usage_monitor.notify_decision import (  # noqa: E402
 from usage_monitor.projector import STRATEGIES  # noqa: E402
 from usage_monitor.thresholds import (  # noqa: E402
     ALERT_PCT,
+    SESSION_ALERT_PCT,
+    SESSION_WARN_PCT,
     WARN_PCT,
     classify,
+    classify_session,
 )
 
 import cairo
@@ -146,15 +149,23 @@ def parse_status(text: str) -> dict:
 
 
 def pick_state(s: dict) -> str:
+    """Combine weekly + session classifications; worst zone wins.
+
+    Weekly uses CC_USAGE_WARN_PCT/ALERT_PCT, session uses
+    CC_USAGE_SESSION_WARN_PCT/ALERT_PCT — the two are independent so a user
+    can alert earlier on the 5h block without changing the weekly thresholds.
+    """
     if not s or "proj_pct" not in s:
         return _STATE_UNKNOWN
+    week_pcts = [s["proj_pct"], s["week_pct"]]
+    week_alert = s.get("alerting") or max(week_pcts) >= ALERT_PCT
+    week_warn = max(week_pcts) >= WARN_PCT
     sess = s.get("session_pct")
-    pcts = [s["proj_pct"], s["week_pct"]]
-    if isinstance(sess, int):
-        pcts.append(sess)
-    if s.get("alerting") or max(pcts) >= ALERT_PCT:
+    sess_alert = isinstance(sess, int) and sess >= SESSION_ALERT_PCT
+    sess_warn = isinstance(sess, int) and sess >= SESSION_WARN_PCT
+    if week_alert or sess_alert:
         return _STATE_ALERT
-    if max(pcts) >= WARN_PCT:
+    if week_warn or sess_warn:
         return _STATE_WARN
     return _STATE_SAFE
 
@@ -456,8 +467,11 @@ class UsageTray:
             is_stale = stale_min is not None and stale_min > STALE_AFTER_MINUTES
             # Concise tray label: e.g. "24% → 51%", with ⚠ prefix if stale
             warn_prefix = "\u26a0 " if is_stale else ""
+            sess_label = s.get("session_pct")
+            sess_part = f" \u00b7 {sess_label}%s" if isinstance(sess_label, int) else ""
             self.indicator.set_label(
-                f"{warn_prefix}{s['week_pct']}% → {s['proj_pct']}%", "99% → 99%"
+                f"{warn_prefix}{s['week_pct']}% → {s['proj_pct']}%{sess_part}",
+                "99% → 99% \u00b7 99%s",
             )
             # Override icon to grey "unknown" disk when data is stale
             if is_stale:
